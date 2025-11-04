@@ -198,19 +198,38 @@ const Dashboard: React.FC = () => {
             });
     
             setMessages(prev => [...prev, { role: 'model', content: '' }]);
+
+            const typeText = (text: string): Promise<void> => {
+                return new Promise(resolve => {
+                    let i = 0;
+                    const intervalId = setInterval(() => {
+                        if (shouldStop) {
+                            clearInterval(intervalId);
+                            return resolve();
+                        }
+                        if (i < text.length) {
+                            setMessages(prev => {
+                                const newMsgs = [...prev];
+                                const lastMsg = newMsgs[newMsgs.length - 1];
+                                if (lastMsg && lastMsg.role === 'model') {
+                                    lastMsg.content += text.charAt(i);
+                                }
+                                return newMsgs;
+                            });
+                            i++;
+                        } else {
+                            clearInterval(intervalId);
+                            resolve();
+                        }
+                    }, 5); // Typing speed
+                });
+            };
     
             for await (const chunk of responseStream) {
                 if (shouldStop) break;
                 const text = chunk.text;
                 if (text) {
-                    setMessages(prev => {
-                        const newMsgs = [...prev];
-                        const lastMsg = newMsgs[newMsgs.length - 1];
-                        if (lastMsg && lastMsg.role === 'model') {
-                            lastMsg.content += text;
-                        }
-                        return newMsgs;
-                    });
+                    await typeText(text);
                 }
             }
         } catch (error) {
