@@ -1,5 +1,6 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI, Modality } from '@google/genai';
+import { GoogleGenAI, Content, Part } from '@google/genai';
 import SettingsModal from '../components/SettingsModal';
 import { 
     ChatBubbleIcon,
@@ -7,52 +8,15 @@ import {
     ChevronDoubleRightIcon,
     ClipboardIcon,
     CloseIcon,
-    EditIcon,
     LightbulbIcon,
     PaperclipIcon,
-    PauseIcon,
     PlusIcon,
-    RefreshIcon,
     SettingsIcon,
-    ShareIcon,
-    ThumbDownIcon,
-    ThumbUpIcon,
     UserProfileIcon,
-    VolumeUpIcon,
+    CheckIcon,
     ArrowUpIcon,
-    CheckIcon
+    SquareIcon
 } from '../components/Icons';
-
-// Base64 decoding for TTS
-function decode(base64: string) {
-    const binaryString = atob(base64);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes;
-}
-  
-// PCM audio data to AudioBuffer for TTS
-async function decodeAudioData(
-    data: Uint8Array,
-    ctx: AudioContext,
-    sampleRate: number,
-    numChannels: number,
-): Promise<AudioBuffer> {
-    const dataInt16 = new Int16Array(data.buffer);
-    const frameCount = dataInt16.length / numChannels;
-    const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-    for (let channel = 0; channel < numChannels; channel++) {
-        const channelData = buffer.getChannelData(channel);
-        for (let i = 0; i < frameCount; i++) {
-        channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-        }
-    }
-    return buffer;
-}
 
 const getApiKey = (): string | null => {
     const userApiKey = localStorage.getItem('gemini-api-key');
@@ -81,6 +45,40 @@ interface Message {
     files?: UploadedFile[];
 }
 
+const MarkdownRenderer: React.FC<{ content: string; isLoading?: boolean }> = ({ content, isLoading }) => {
+    const pattern = /(```[\s\S]*?```|\*\*.*?\*\*|\*.*?\*|`.*?`)/g;
+
+    const parts = content.split(pattern).filter(part => part);
+
+    const elements = parts.map((part, index) => {
+        if (part.startsWith('```') && part.endsWith('```')) {
+            const code = part.substring(3, part.length - 3).trim();
+            return (
+                <pre key={index} className="bg-black/50 p-3 rounded-md my-2 overflow-x-auto">
+                    <code className="text-white font-mono text-sm">{code}</code>
+                </pre>
+            );
+        }
+        if (part.startsWith('**') && part.endsWith('**')) {
+            return <strong key={index}>{part.substring(2, part.length - 2)}</strong>;
+        }
+        if (part.startsWith('*') && part.endsWith('*')) {
+            return <em key={index}>{part.substring(1, part.length - 1)}</em>;
+        }
+        if (part.startsWith('`') && part.endsWith('`')) {
+            return <code key={index} className="bg-black/50 text-red-300 font-mono px-1.5 py-0.5 rounded-sm">{part.substring(1, part.length - 1)}</code>;
+        }
+        return part;
+    });
+
+    return (
+        <div className="text-white text-base leading-relaxed whitespace-pre-wrap font-mono">
+            {elements}
+            {isLoading && <span className="blinking-cursor" />}
+        </div>
+    );
+};
+
 const Dashboard: React.FC = () => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState('');
@@ -89,8 +87,8 @@ const Dashboard: React.FC = () => {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [chatTitle, setChatTitle] = useState('New Chat');
     const [copiedStates, setCopiedStates] = useState<{ [key: number]: boolean }>({});
-    const [feedback, setFeedback] = useState<{ [key: number]: 'up' | 'down' | null }>({});
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+    const [thinkingDots, setThinkingDots] = useState('.');
     
     // Cleaned up recent chats
     const [recentChats, setRecentChats] = useState<string[]>([]);
@@ -116,12 +114,24 @@ const Dashboard: React.FC = () => {
         }
     }, [inputValue]);
     
+    useEffect(() => {
+        let interval: number;
+        if (isLoading && (messages.length === 0 || messages[messages.length - 1].role === 'user')) {
+            interval = window.setInterval(() => {
+                setThinkingDots(dots => (dots.length >= 3 ? '.' : dots + '.'));
+            }, 300);
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [isLoading, messages]);
+
     const handleSendMessage = async (e?: React.FormEvent, prompt?: string) => {
         if (e) e.preventDefault();
         const currentInput = (prompt || inputValue).trim();
     
         if ((!currentInput && uploadedFiles.length === 0) || isLoading) return;
-
+    
         const apiKey = getApiKey();
         if (!apiKey) {
             alert("No API Key configured. Please add your Gemini API Key in the Settings menu (bottom left) to continue.");
@@ -134,7 +144,9 @@ const Dashboard: React.FC = () => {
             files: [...uploadedFiles],
         };
     
-        setMessages(prev => [...prev, userMessage]);
+        const updatedMessages = [...messages, userMessage];
+        setMessages(updatedMessages);
+
         if (!prompt) setInputValue('');
         setUploadedFiles([]);
         setIsLoading(true);
@@ -145,34 +157,44 @@ const Dashboard: React.FC = () => {
         try {
             const ai = new GoogleGenAI({ apiKey });
             
-            const parts: any[] = [];
-
-            const imageFiles = uploadedFiles.filter(f => f.isImage);
-            imageFiles.forEach(file => {
-                parts.push({
-                    inlineData: {
-                        mimeType: file.type,
-                        data: file.base64Data,
-                    },
-                });
-            });
-
-            let textPrompt = currentInput;
-            const nonImageFiles = uploadedFiles.filter(f => !f.isImage);
-            if (nonImageFiles.length > 0) {
-                const fileNames = nonImageFiles.map(f => f.name).join(', ');
-                textPrompt += `\n\n(For context, the following files were also attached: ${fileNames}. You cannot read their contents.)`;
-            }
-            
-            if (uploadedFiles.length > 0 && !textPrompt) {
-                textPrompt = "Describe the attached image(s).";
-            }
-
-            parts.push({ text: textPrompt });
+            const contents: Content[] = updatedMessages.map(msg => {
+                const parts: Part[] = [];
+                let textContent = msg.content;
+    
+                if (msg.files && msg.files.length > 0) {
+                    msg.files.filter(f => f.isImage).forEach(file => {
+                        parts.push({
+                            inlineData: {
+                                mimeType: file.type,
+                                data: file.base64Data,
+                            },
+                        });
+                    });
+                    
+                    const nonImageFiles = msg.files.filter(f => !f.isImage);
+                    if (nonImageFiles.length > 0) {
+                        const fileNames = nonImageFiles.map(f => f.name).join(', ');
+                        textContent += `\n\n(For context, the following files were also attached: ${fileNames}. You cannot read their contents.)`;
+                    }
+    
+                    if (msg.files.some(f => f.isImage) && !textContent) {
+                        textContent = "Describe the attached image(s).";
+                    }
+                }
+    
+                if (textContent) {
+                    parts.push({ text: textContent });
+                }
+    
+                return {
+                    role: msg.role,
+                    parts: parts,
+                };
+            }).filter(c => c.parts.length > 0);
 
             const responseStream = await ai.models.generateContentStream({
                 model: 'gemini-2.5-flash',
-                contents: { parts },
+                contents: contents,
             });
     
             setMessages(prev => [...prev, { role: 'model', content: '' }]);
@@ -183,7 +205,10 @@ const Dashboard: React.FC = () => {
                 if (text) {
                     setMessages(prev => {
                         const newMsgs = [...prev];
-                        newMsgs[newMsgs.length - 1].content += text;
+                        const lastMsg = newMsgs[newMsgs.length - 1];
+                        if (lastMsg && lastMsg.role === 'model') {
+                            lastMsg.content += text;
+                        }
                         return newMsgs;
                     });
                 }
@@ -194,7 +219,15 @@ const Dashboard: React.FC = () => {
             if (error instanceof Error && error.message.includes('API key not valid')) {
                 errorMessage = "Your API key is invalid. Please check it in the Settings menu.";
             }
-            setMessages(prev => [...prev, { role: 'model', content: errorMessage }]);
+            setMessages(prev => {
+                const newMsgs = [...prev];
+                const lastMsg = newMsgs[newMsgs.length - 1];
+                if (lastMsg?.role === 'model' && lastMsg.content === '') {
+                    lastMsg.content = errorMessage;
+                    return newMsgs;
+                }
+                return [...newMsgs, { role: 'model', content: errorMessage }];
+            });
         } finally {
             setIsLoading(false);
             generationControllerRef.current = null;
@@ -208,22 +241,6 @@ const Dashboard: React.FC = () => {
         }
     };
 
-    const handleRegenerate = () => {
-        const lastUserMessage = messages.filter(m => m.role === 'user').pop();
-        if (lastUserMessage) {
-            setMessages(prev => {
-                // Find the last user message and remove everything after it
-                const lastUserMessageIndex = prev.findLastIndex(m => m.role === 'user');
-                return prev.slice(0, lastUserMessageIndex + 1);
-            });
-             // Set files and input for resubmission
-            setUploadedFiles(lastUserMessage.files || []);
-            setInputValue(lastUserMessage.content);
-            // Trigger send with the old content
-            handleSendMessage(undefined, lastUserMessage.content);
-        }
-    };
-
     const handleCopy = (text: string, index: number) => {
         navigator.clipboard.writeText(text);
         setCopiedStates(prev => ({ ...prev, [index]: true }));
@@ -231,47 +248,7 @@ const Dashboard: React.FC = () => {
             setCopiedStates(prev => ({ ...prev, [index]: false }));
         }, 2000);
     };
-
-    const handleTTS = async (text: string) => {
-        if (!text) return;
-        const apiKey = getApiKey();
-        if (!apiKey) {
-            alert("No API Key configured. Please add your Gemini API Key in the Settings menu (bottom left) to continue.");
-            return;
-        }
-        try {
-            const ai = new GoogleGenAI({ apiKey });
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash-preview-tts",
-                contents: [{ parts: [{ text }] }],
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-                },
-            });
-            const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-            if (base64Audio) {
-                const outputAudioContext = new ((window as any).AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-                const audioBuffer = await decodeAudioData(decode(base64Audio), outputAudioContext, 24000, 1);
-                const source = outputAudioContext.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(outputAudioContext.destination);
-                source.start();
-            }
-        } catch (error) {
-            console.error("Error generating speech", error);
-            if (error instanceof Error && error.message.includes('API key not valid')) {
-                alert("Your API key is invalid. Please check it in the Settings menu.");
-            } else {
-                alert("An error occurred while generating speech.");
-            }
-        }
-    };
     
-    const handleFeedback = (index: number, type: 'up' | 'down') => {
-        setFeedback(prev => ({ ...prev, [index]: prev[index] === type ? null : type }));
-    };
-
     const handleNewChat = () => {
         setMessages([]);
         setChatTitle('New Chat');
@@ -413,31 +390,26 @@ const Dashboard: React.FC = () => {
                             </div>
                         </div>
                     ) : (
-                        <div key={index} className="flex flex-col gap-4 max-w-[80%]">
-                            <div>
-                                <p className="text-white text-base leading-relaxed whitespace-pre-wrap font-mono">{message.content}</p>
-                            </div>
-                            <div className="flex items-center gap-4">
-                                <div className="flex items-center gap-3">
-                                    <AiMessageAction icon={<RefreshIcon className="w-5 h-5" />} onClick={handleRegenerate} />
-                                    <AiMessageAction icon={<VolumeUpIcon className="w-5 h-5" />} onClick={() => handleTTS(message.content)} />
+                        <div key={index} className="flex justify-start">
+                             <div className="flex flex-col gap-4 max-w-[80%]">
+                                <div>
+                                    <MarkdownRenderer content={message.content} isLoading={isLoading && index === messages.length - 1} />
+                                </div>
+                                <div className="flex items-center gap-4">
                                     <AiMessageAction icon={copiedStates[index] ? <CheckIcon className="w-5 h-5 text-green-400" /> : <ClipboardIcon className="w-5 h-5" />} onClick={() => handleCopy(message.content, index)} />
-                                    <AiMessageAction icon={<ShareIcon className="w-5 h-5" />} onClick={() => alert('Share functionality coming soon!')}/>
-                                 </div>
-                                <div className="flex items-center gap-3 border-l border-[#515152] pl-3">
-                                    <AiMessageAction icon={<ThumbUpIcon className="w-5 h-5" isFilled={feedback[index] === 'up'} />} onClick={() => handleFeedback(index, 'up')} />
-                                    <AiMessageAction icon={<ThumbDownIcon className="w-5 h-5" isFilled={feedback[index] === 'down'} />} onClick={() => handleFeedback(index, 'down')} />
                                 </div>
                             </div>
                         </div>
                     )
                 ))}
-
-                {isLoading && (
-                    <div className="flex flex-col gap-4">
-                        <div className="flex items-center gap-2 text-gray-400">
-                            <LightbulbIcon className="w-5 h-5 animate-pulse" />
-                            <span>Thinking...</span>
+                
+                {isLoading && (messages.length === 0 || messages[messages.length - 1].role === 'user') && (
+                    <div className="flex justify-start">
+                        <div className="max-w-[80%]">
+                            <div className="flex items-center gap-2 text-gray-400">
+                                <LightbulbIcon className="w-5 h-5 animate-pulse" />
+                                <span>Thinking{thinkingDots}</span>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -497,7 +469,7 @@ const Dashboard: React.FC = () => {
                         <div>
                             {isLoading ? (
                                 <button type="button" onClick={() => generationControllerRef.current?.stop()} className="w-10 h-10 flex items-center justify-center rounded-full bg-white text-black transition-all active:scale-90">
-                                    <PauseIcon className="w-6 h-6" />
+                                    <SquareIcon className="w-6 h-6" />
                                 </button>
                             ) : (
                                 <button type="submit" disabled={!inputValue.trim() && uploadedFiles.length === 0} className="w-10 h-10 flex items-center justify-center rounded-full bg-white text-black transition-all active:scale-90 hover:scale-110 disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed">

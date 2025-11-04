@@ -158,6 +158,19 @@
         animation: shine 4s infinite linear;
         animation-delay: 2s;
       }
+      @keyframes blink-caret {
+        from, to { opacity: 1; }
+        50% { opacity: 0; }
+      }
+      .blinking-cursor {
+        display: inline-block;
+        width: 8px;
+        height: 1.2rem;
+        background-color: white;
+        animation: blink-caret 1.2s step-end infinite;
+        vertical-align: text-bottom;
+        margin-left: 4px;
+      }
     </style>
   <script type="importmap">
 {
