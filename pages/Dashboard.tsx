@@ -6,6 +6,7 @@ import {
     ChevronDoubleLeftIcon,
     ChevronDoubleRightIcon,
     ClipboardIcon,
+    CloseIcon,
     EditIcon,
     LightbulbIcon,
     PaperclipIcon,
@@ -53,15 +54,31 @@ async function decodeAudioData(
     return buffer;
 }
 
+const getApiKey = (): string | null => {
+    const userApiKey = localStorage.getItem('gemini-api-key');
+    if (userApiKey) {
+        return userApiKey;
+    }
+    return process.env.API_KEY || null;
+};
+
 const AiMessageAction: React.FC<{ icon: React.ReactNode; onClick?: () => void }> = ({ icon, onClick }) => (
     <button onClick={onClick} className="text-gray-400 hover:text-white transition-all active:scale-90">
         {icon}
     </button>
 );
 
+interface UploadedFile {
+    name: string;
+    type: string;
+    base64Data: string;
+    isImage: boolean;
+}
+
 interface Message {
     role: 'user' | 'model';
     content: string;
+    files?: UploadedFile[];
 }
 
 const Dashboard: React.FC = () => {
@@ -73,6 +90,7 @@ const Dashboard: React.FC = () => {
     const [chatTitle, setChatTitle] = useState('New Chat');
     const [copiedStates, setCopiedStates] = useState<{ [key: number]: boolean }>({});
     const [feedback, setFeedback] = useState<{ [key: number]: 'up' | 'down' | null }>({});
+    const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
     
     // Cleaned up recent chats
     const [recentChats, setRecentChats] = useState<string[]>([]);
@@ -89,7 +107,7 @@ const Dashboard: React.FC = () => {
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages, isLoading, inputValue]);
+    }, [messages, isLoading]);
     
     useEffect(() => {
         if (textareaRef.current) {
@@ -101,25 +119,64 @@ const Dashboard: React.FC = () => {
     const handleSendMessage = async (e?: React.FormEvent, prompt?: string) => {
         if (e) e.preventDefault();
         const currentInput = (prompt || inputValue).trim();
-        if (!currentInput || isLoading) return;
+    
+        if ((!currentInput && uploadedFiles.length === 0) || isLoading) return;
 
-        const newMessages: Message[] = [...messages, { role: 'user', content: currentInput }];
-        setMessages(newMessages);
+        const apiKey = getApiKey();
+        if (!apiKey) {
+            alert("No API Key configured. Please add your Gemini API Key in the Settings menu (bottom left) to continue.");
+            return;
+        }
+    
+        const userMessage: Message = {
+            role: 'user',
+            content: currentInput,
+            files: [...uploadedFiles],
+        };
+    
+        setMessages(prev => [...prev, userMessage]);
         if (!prompt) setInputValue('');
+        setUploadedFiles([]);
         setIsLoading(true);
         
         let shouldStop = false;
         generationControllerRef.current = { stop: () => { shouldStop = true; } };
-
+    
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const responseStream = await ai.models.generateContentStream({
-                model: 'gemini-2.5-flash',
-                contents: currentInput,
+            const ai = new GoogleGenAI({ apiKey });
+            
+            const parts: any[] = [];
+
+            const imageFiles = uploadedFiles.filter(f => f.isImage);
+            imageFiles.forEach(file => {
+                parts.push({
+                    inlineData: {
+                        mimeType: file.type,
+                        data: file.base64Data,
+                    },
+                });
             });
 
-            setMessages(prev => [...prev, { role: 'model', content: '' }]);
+            let textPrompt = currentInput;
+            const nonImageFiles = uploadedFiles.filter(f => !f.isImage);
+            if (nonImageFiles.length > 0) {
+                const fileNames = nonImageFiles.map(f => f.name).join(', ');
+                textPrompt += `\n\n(For context, the following files were also attached: ${fileNames}. You cannot read their contents.)`;
+            }
+            
+            if (uploadedFiles.length > 0 && !textPrompt) {
+                textPrompt = "Describe the attached image(s).";
+            }
 
+            parts.push({ text: textPrompt });
+
+            const responseStream = await ai.models.generateContentStream({
+                model: 'gemini-2.5-flash',
+                contents: { parts },
+            });
+    
+            setMessages(prev => [...prev, { role: 'model', content: '' }]);
+    
             for await (const chunk of responseStream) {
                 if (shouldStop) break;
                 const text = chunk.text;
@@ -133,7 +190,11 @@ const Dashboard: React.FC = () => {
             }
         } catch (error) {
             console.error("Error calling Gemini API", error);
-            setMessages(prev => [...prev, { role: 'model', content: "Sorry, I encountered an error. Please try again." }]);
+            let errorMessage = "Sorry, I encountered an error. Please try again.";
+            if (error instanceof Error && error.message.includes('API key not valid')) {
+                errorMessage = "Your API key is invalid. Please check it in the Settings menu.";
+            }
+            setMessages(prev => [...prev, { role: 'model', content: errorMessage }]);
         } finally {
             setIsLoading(false);
             generationControllerRef.current = null;
@@ -150,7 +211,15 @@ const Dashboard: React.FC = () => {
     const handleRegenerate = () => {
         const lastUserMessage = messages.filter(m => m.role === 'user').pop();
         if (lastUserMessage) {
-            setMessages(prev => prev.slice(0, -1)); // Remove previous model response
+            setMessages(prev => {
+                // Find the last user message and remove everything after it
+                const lastUserMessageIndex = prev.findLastIndex(m => m.role === 'user');
+                return prev.slice(0, lastUserMessageIndex + 1);
+            });
+             // Set files and input for resubmission
+            setUploadedFiles(lastUserMessage.files || []);
+            setInputValue(lastUserMessage.content);
+            // Trigger send with the old content
             handleSendMessage(undefined, lastUserMessage.content);
         }
     };
@@ -165,8 +234,13 @@ const Dashboard: React.FC = () => {
 
     const handleTTS = async (text: string) => {
         if (!text) return;
+        const apiKey = getApiKey();
+        if (!apiKey) {
+            alert("No API Key configured. Please add your Gemini API Key in the Settings menu (bottom left) to continue.");
+            return;
+        }
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const ai = new GoogleGenAI({ apiKey });
             const response = await ai.models.generateContent({
                 model: "gemini-2.5-flash-preview-tts",
                 contents: [{ parts: [{ text }] }],
@@ -186,6 +260,11 @@ const Dashboard: React.FC = () => {
             }
         } catch (error) {
             console.error("Error generating speech", error);
+            if (error instanceof Error && error.message.includes('API key not valid')) {
+                alert("Your API key is invalid. Please check it in the Settings menu.");
+            } else {
+                alert("An error occurred while generating speech.");
+            }
         }
     };
     
@@ -196,14 +275,40 @@ const Dashboard: React.FC = () => {
     const handleNewChat = () => {
         setMessages([]);
         setChatTitle('New Chat');
+        setUploadedFiles([]);
+        setInputValue('');
     };
 
     const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-        if (event.target.files && event.target.files[0]) {
-            const file = event.target.files[0];
-            console.log("Uploaded file:", file.name);
-            // Here you would handle the file, e.g., read it for multimodal input
+        const files = event.target.files;
+        if (!files) return;
+
+        if (uploadedFiles.length + files.length > 3) {
+            alert("You can upload a maximum of 3 files.");
+            return;
         }
+
+        // Fix: Explicitly type `file` as `File` to fix type inference issues.
+        Array.from(files).forEach((file: File) => {
+            const reader = new FileReader();
+            reader.onload = (loadEvent) => {
+                const base64String = (loadEvent.target?.result as string).split(',')[1];
+                const newFile: UploadedFile = {
+                    name: file.name,
+                    type: file.type,
+                    base64Data: base64String,
+                    isImage: file.type.startsWith('image/'),
+                };
+                setUploadedFiles(prev => [...prev, newFile]);
+            };
+            reader.readAsDataURL(file);
+        });
+        
+        event.target.value = ''; // Reset file input to allow re-uploading the same file
+    };
+
+    const handleRemoveFile = (indexToRemove: number) => {
+        setUploadedFiles(prev => prev.filter((_, index) => index !== indexToRemove));
     };
 
   return (
@@ -288,7 +393,23 @@ const Dashboard: React.FC = () => {
                     message.role === 'user' ? (
                         <div key={index} className="flex justify-end">
                             <div className="bg-[#424243] rounded-xl px-5 py-3 max-w-[80%]">
-                                <p className="text-white whitespace-pre-wrap font-mono">{message.content}</p>
+                                {message.files && message.files.length > 0 && (
+                                    <div className="flex flex-wrap gap-2 mb-2">
+                                        {message.files.map((file, fileIndex) => (
+                                            <div key={fileIndex}>
+                                                {file.isImage ? (
+                                                    <img src={`data:${file.type};base64,${file.base64Data}`} alt={file.name} className="h-24 w-24 object-cover rounded-lg" />
+                                                ) : (
+                                                    <div className="h-24 w-24 bg-[#2d2d2d] rounded-lg flex flex-col items-center justify-center p-2 text-center">
+                                                        <PaperclipIcon className="w-8 h-8 mb-1 text-gray-400" />
+                                                        <span className="text-xs text-gray-300 break-all">{file.name}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {message.content && <p className="text-white whitespace-pre-wrap font-mono">{message.content}</p>}
                             </div>
                         </div>
                     ) : (
@@ -327,6 +448,34 @@ const Dashboard: React.FC = () => {
         <footer className="px-4 md:px-6 py-3 flex justify-center">
             <div className="w-full max-w-4xl">
                 <form onSubmit={handleSendMessage} className="bg-[#212121] rounded-3xl overflow-hidden flex flex-col border border-white/10">
+                    {uploadedFiles.length > 0 && (
+                        <div className="px-5 pt-3 flex flex-wrap gap-2 border-b border-white/10 pb-3">
+                            {uploadedFiles.map((file, index) => (
+                                <div key={index} className="relative group">
+                                    {file.isImage ? (
+                                        <img
+                                            src={`data:${file.type};base64,${file.base64Data}`}
+                                            alt={file.name}
+                                            className="h-20 w-20 object-cover rounded-lg"
+                                        />
+                                    ) : (
+                                        <div className="h-20 w-20 bg-[#2d2d2d] rounded-lg flex flex-col items-center justify-center p-2 text-center">
+                                            <PaperclipIcon className="w-6 h-6 mb-1 text-gray-400" />
+                                            <span className="text-xs text-gray-300 truncate w-full">{file.name}</span>
+                                        </div>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => handleRemoveFile(index)}
+                                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-black rounded-full text-white flex items-center justify-center text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity border border-white/50"
+                                        aria-label={`Remove ${file.name}`}
+                                    >
+                                        <CloseIcon className="w-3 h-3"/>
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     <textarea
                         ref={textareaRef}
                         rows={1}
@@ -340,8 +489,8 @@ const Dashboard: React.FC = () => {
                     />
                     <div className="flex justify-between items-center pl-3 pr-2 pb-2 pt-1">
                         <div>
-                           <input type="file" id="file-upload" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
-                           <label htmlFor="file-upload" className="cursor-pointer text-white p-3 rounded-full hover:bg-[#4a4a4b] inline-block">
+                           <input type="file" id="file-upload" ref={fileInputRef} className="hidden" onChange={handleFileUpload} multiple disabled={uploadedFiles.length >= 3} />
+                           <label htmlFor="file-upload" className={`cursor-pointer text-white p-3 rounded-full inline-block ${uploadedFiles.length >= 3 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-[#4a4a4b]'}`}>
                               <PlusIcon className="w-6 h-6" />
                            </label>
                         </div>
@@ -351,7 +500,7 @@ const Dashboard: React.FC = () => {
                                     <PauseIcon className="w-6 h-6" />
                                 </button>
                             ) : (
-                                <button type="submit" disabled={!inputValue.trim()} className="w-10 h-10 flex items-center justify-center rounded-full bg-white text-black transition-all active:scale-90 hover:scale-110 disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed">
+                                <button type="submit" disabled={!inputValue.trim() && uploadedFiles.length === 0} className="w-10 h-10 flex items-center justify-center rounded-full bg-white text-black transition-all active:scale-90 hover:scale-110 disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed">
                                     <ArrowUpIcon className="w-6 h-6" />
                                 </button>
                             )}

@@ -64,12 +64,12 @@ const LandingPage: React.FC = () => {
 
       {/* Header */}
       <header
-        className="absolute top-0 left-0 right-0 p-2 sm:p-4 flex justify-between items-center z-20 animate-fade-in-down"
+        className="absolute top-0 left-0 right-0 px-4 py-2 flex justify-between items-center z-20 animate-fade-in-down"
         style={{ animationDelay: '0.1s' }}
       >
         <button onClick={() => window.location.hash = ''} className="flex items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-white rounded-lg">
-            <img src="https://res.cloudinary.com/dkvkxermy/image/upload/v1762160811/20bbfb2f-a218-4a21-b75f-4b75789f05d8_ycizdr.png" alt="Agentverse Logo" className="h-24 w-24" />
-            <span className="text-2xl font-bold tracking-wider font-saira ml-[-1rem]">Agentverse</span>
+            <img src="https://res.cloudinary.com/dkvkxermy/image/upload/v1762160811/20bbfb2f-a218-4a21-b75f-4b75789f05d8_ycizdr.png" alt="Agentverse Logo" className="h-16 w-16" />
+            <span className="text-2xl font-bold tracking-wider font-saira ml-[-0.75rem]">Agentverse</span>
         </button>
         <button
           onClick={() => setIsModalOpen(true)}
