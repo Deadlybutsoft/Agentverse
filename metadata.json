@@ -1,0 +1,5 @@
+{
+  "name": "agentverse",
+  "description": "A high-fidelity clone of a stylish 'coming soon' landing page with a space theme, designed to capture user emails for a waitlist. Built with React, TypeScript, and Tailwind CSS.",
+  "requestFramePermissions": []
+}
