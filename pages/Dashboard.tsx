@@ -406,7 +406,7 @@ const Dashboard: React.FC = () => {
                 {isLoading && (messages.length === 0 || messages[messages.length - 1].role === 'user') && (
                     <div className="flex justify-start">
                         <div className="max-w-[80%]">
-                            <div className="flex items-center gap-2 text-gray-400">
+                            <div className="flex items-center gap-2 text-white">
                                 <LightbulbIcon className="w-5 h-5 animate-pulse" />
                                 <span>Thinking{thinkingDots}</span>
                             </div>

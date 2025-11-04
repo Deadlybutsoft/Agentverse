@@ -1,16 +1,18 @@
+
 import React, { useState, useEffect } from 'react';
-import { CloseIcon, UserIcon, LinkIcon, HistoryIcon, CreditCardIcon, FolderIcon } from './Icons';
+import { CloseIcon, UserIcon, LinkIcon, HistoryIcon, CreditCardIcon, FolderIcon, CubeIcon } from './Icons';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-type SettingsTab = 'Account' | 'Connect' | 'Schedule' | 'API Keys' | 'Data';
+type SettingsTab = 'Account' | 'Connect' | 'Agent' | 'Schedule' | 'API Keys' | 'Data';
 
 const settingsTabs: { name: SettingsTab, icon: React.FC<{className?: string}> }[] = [
     { name: 'Account', icon: UserIcon },
     { name: 'Connect', icon: LinkIcon },
+    { name: 'Agent', icon: CubeIcon },
     { name: 'Schedule', icon: HistoryIcon },
     { name: 'API Keys', icon: CreditCardIcon },
     { name: 'Data', icon: FolderIcon },
