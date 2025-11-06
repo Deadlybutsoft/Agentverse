@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, Content, Part } from '@google/genai';
 import SettingsModal from '../components/SettingsModal';
@@ -6,14 +5,12 @@ import {
     ChatBubbleIcon,
     ChevronDoubleLeftIcon,
     ChevronDoubleRightIcon,
-    ClipboardIcon,
     CloseIcon,
     LightbulbIcon,
     PaperclipIcon,
     PlusIcon,
     SettingsIcon,
     UserProfileIcon,
-    CheckIcon,
     ArrowUpIcon,
     SquareIcon
 } from '../components/Icons';
@@ -25,12 +22,6 @@ const getApiKey = (): string | null => {
     }
     return process.env.API_KEY || null;
 };
-
-const AiMessageAction: React.FC<{ icon: React.ReactNode; onClick?: () => void }> = ({ icon, onClick }) => (
-    <button onClick={onClick} className="text-gray-400 hover:text-white transition-all active:scale-90">
-        {icon}
-    </button>
-);
 
 interface UploadedFile {
     name: string;
@@ -86,7 +77,6 @@ const Dashboard: React.FC = () => {
     const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [chatTitle, setChatTitle] = useState('New Chat');
-    const [copiedStates, setCopiedStates] = useState<{ [key: number]: boolean }>({});
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
     const [thinkingDots, setThinkingDots] = useState('.');
     
@@ -260,14 +250,6 @@ const Dashboard: React.FC = () => {
         }
     };
 
-    const handleCopy = (text: string, index: number) => {
-        navigator.clipboard.writeText(text);
-        setCopiedStates(prev => ({ ...prev, [index]: true }));
-        setTimeout(() => {
-            setCopiedStates(prev => ({ ...prev, [index]: false }));
-        }, 2000);
-    };
-    
     const handleNewChat = () => {
         setMessages([]);
         setChatTitle('New Chat');
@@ -369,11 +351,10 @@ const Dashboard: React.FC = () => {
       <div className="relative isolate flex-1 flex flex-col overflow-hidden bg-[#151515]" onClick={() => isSidebarExpanded && setIsSidebarExpanded(false)}>
         <button
             onClick={handleNewChat}
-            className="absolute top-4 right-4 z-10 px-3 py-1.5 rounded-lg bg-[#2d2d2d] text-white hover:bg-[#3f3f3f] transition-colors duration-200 active:scale-95 text-sm font-medium flex items-center gap-2"
+            className="absolute top-4 right-4 z-10 p-2 rounded-full bg-[#2d2d2d] text-white hover:bg-[#3f3f3f] transition-colors duration-200 active:scale-95 flex items-center justify-center"
             aria-label="New Chat"
         >
-            <PlusIcon className="w-4 h-4" />
-            New Chat
+            <PlusIcon className="w-5 h-5" />
         </button>
         
         <main className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col items-center">
@@ -410,13 +391,8 @@ const Dashboard: React.FC = () => {
                         </div>
                     ) : (
                         <div key={index} className="flex justify-start">
-                             <div className="flex flex-col gap-4 max-w-[80%]">
-                                <div>
-                                    <MarkdownRenderer content={message.content} isLoading={isLoading && index === messages.length - 1} />
-                                </div>
-                                <div className="flex items-center gap-4">
-                                    <AiMessageAction icon={copiedStates[index] ? <CheckIcon className="w-5 h-5 text-green-400" /> : <ClipboardIcon className="w-5 h-5" />} onClick={() => handleCopy(message.content, index)} />
-                                </div>
+                             <div className="max-w-[80%]">
+                                <MarkdownRenderer content={message.content} isLoading={isLoading && index === messages.length - 1} />
                             </div>
                         </div>
                     )
